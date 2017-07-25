@@ -51,7 +51,7 @@ library
     , time
     , parsec
     , safe
-    , websockets > 0.8
+    , network
     , mtl >= 2.1
 
 source-repository head
