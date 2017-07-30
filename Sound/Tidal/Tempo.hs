@@ -114,7 +114,7 @@ tempoReceiver = do now <- getCurrentTime
 tempoReceiverLoop :: UDP -> MVar Tempo -> IO ()
 tempoReceiverLoop s mTempo =
   do ms <- recvMessages s
-     mapM_ (act (messageAddress m) mTempo) ms
+     mapM_ (\m -> act (messageAddress m) mTempo m) ms
      tempoReceiverLoop s mTempo
 
 act "/tempo" mTempo m = do swapMVar mTempo t
