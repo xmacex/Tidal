@@ -31,15 +31,18 @@ getSenderIp = fromMaybe "127.0.0.1" <$> lookupEnv "TIDAL_TEMPO_IP"
 
 getSenderPort :: IO Int
 getSenderPort =
-   maybe 9161 (readNote "port parse") <$> lookupEnv "TIDAL_TEMPO_PORT"
+   maybe 6041 (readNote "port parse") <$> lookupEnv "TIDAL_TEMPO_PORT"
 
-sendCPS cps = do s <- openUDP "127.0.0.1" 9161
+sendCPS cps = do port <- getSenderPort
+                 s <- openUDP "127.0.0.1" port
                  sendOSC s $ Message "/cps" [Float cps]
 
-sendNudge nudge = do s <- openUDP "127.0.0.1" 9161
+sendNudge nudge = do port <- getSenderPort
+                     s <- openUDP "127.0.0.1" port
                      sendOSC s $ Message "/nudge" [Float nudge]
 
-ping = do s <- openUDP "127.0.0.1" 9161
+ping = do port <- getSenderPort
+          s <- openUDP "127.0.0.1" port
           sendOSC s $ Message "/ping" []
 
 updateTempo :: Tempo -> Double -> IO (Tempo)
@@ -110,21 +113,25 @@ tempoReceiver = do now <- getCurrentTime
 
 tempoReceiverLoop :: UDP -> MVar Tempo -> IO ()
 tempoReceiverLoop s mTempo =
-  do b <- recvBundle s
-     let timestamp = addUTCTime (realToFrac $ ntpr_to_ut $ bundleTime b) ut_epoch
-     mapM_ (process timestamp) (bundleMessages b)
+  do ms <- recvMessages s
+     mapM_ (act (messageAddress m) mTempo) ms
      tempoReceiverLoop s mTempo
-       where process timestamp m =
-               do let address = messageAddress m
-                  act address mTempo timestamp m
 
-act "/tempo" mTempo timestamp m = swapMVar mTempo t
-  where t = Tempo {at = timestamp,
-                   beat = fromJust $ datum_floating $ (messageDatum m) !! 0,
-                   cps = fromJust $ datum_floating $ (messageDatum m) !! 1,
+act "/tempo" mTempo m = do swapMVar mTempo t
+                           return ()
+  where t = Tempo {at = ut,
+                   beat = fromJust $ datum_floating $ (messageDatum m) !! 2,
+                   cps = fromJust $ datum_floating $ (messageDatum m) !! 3,
                    paused = False,
                    nudged = 0
                   }
+        ut = addUTCTime (realToFrac $ dsec) ut_epoch
+        sec = fromJust $ datum_int32 $ (messageDatum m) !! 0
+        usec = fromJust $ datum_int32 $ (messageDatum m) !! 1
+        dsec = ((fromIntegral sec) + ((fromIntegral usec) / 1000000)) :: Double
+
+act x mTempo _ = do putStrLn ("no act for" ++ x)
+                    return ()
 
 clients = do sock <- N.socket N.AF_INET N.Datagram 0
              -- N.setSocketOptiSocketon sock N.NoDelay 1
@@ -137,12 +144,16 @@ clients = do sock <- N.socket N.AF_INET N.Datagram 0
              return s
 
 sendTempo :: UDP -> Tempo -> IO ()
-sendTempo sock t = sendOSC sock b
-  where m = Message "/tempo" [float (realToFrac $ beat t),
+sendTempo sock t = sendOSC sock m
+  where m = Message "/tempo" [int32 sec,
+                              int32 usec,
+                              float (realToFrac $ beat t),
                               float (realToFrac $ cps t),
                               string (show $ paused t)
                              ]
-        b = Bundle (ut_to_ntpr $ utc_to_ut $ at t) [m]
+        ut = utc_to_ut $ at t
+        sec = floor ut
+        usec = floor ((ut - (fromIntegral sec)) * 1000000)
 
 logicalTime :: Tempo -> Double -> Double
 logicalTime t b = changeT + timeDelta
