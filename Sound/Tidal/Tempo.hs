@@ -12,12 +12,19 @@ import Control.Concurrent.MVar
 import Control.Concurrent
 import Control.Monad (foldM)
 
+data Client = Client {port :: Int,
+                      udp :: UDP,
+                      failures :: Int
+                     }
+
 data Tempo = Tempo {at :: UTCTime,
                     beat :: Double,
                     cps :: Double,
                     paused :: Bool,
                     nudged :: Double
                    }
+
+type ServerState = (Tempo, [Client])
 
 instance Show Tempo where
   show x = (show (at x) ++ ", " ++
@@ -44,10 +51,12 @@ sendNudge nudge = do port <- getSenderPort
                      sendOSC s $ Message "/nudge" [Float nudge]
                      close s
 
-ping = do port <- getSenderPort
-          s <- openUDP "127.0.0.1" port
-          sendOSC s $ Message "/ping" []
-          close s
+subscribe :: Int -> IO ()
+subscribe p = do senderPort <- getSenderPort
+                 s <- openUDP "127.0.0.1" senderPort
+                 sendOSC s $ Message "/subscribe" [Int32 $ fromIntegral p]
+                 close s
+                 return ()
 
 updateTempo :: Tempo -> Double -> IO (Tempo)
 updateTempo t cps'
@@ -65,40 +74,45 @@ updateTempo t cps'
 nudgeTempo :: Tempo -> Double -> Tempo
 nudgeTempo t secs = t {at = addUTCTime (realToFrac secs) (at t)}
 
-tempoSender :: IO ()
-tempoSender = do now <- getCurrentTime
-                 ip <- getSenderIp
-                 port <- getSenderPort
-                 let tempoState = Tempo now 0 1 False 0
-                 s <- udpServer ip port
-                 c <- clients
-                 sendTempo c tempoState
-                 tempoSenderLoop s c tempoState
-                   where tempoSenderLoop :: UDP -> UDP -> Tempo -> IO ()
-                         tempoSenderLoop s c tempoState =
-                           do ms <- recvMessages s
-                              tempoState' <- foldM (senderAct c) tempoState ms 
-                              tempoSenderLoop s c tempoState'
+tempoSender :: IO (ThreadId)
+tempoSender = forkIO $ do now <- getCurrentTime
+                          ip <- getSenderIp
+                          port <- getSenderPort
+                          let tempo = Tempo now 0 1 False 0
+                          s <- udpServer ip port
+                          tempoSenderLoop s (tempo, [])
+                            where tempoSenderLoop :: UDP -> ServerState -> IO ()
+                                  tempoSenderLoop s state =
+                                    do ms <- recvMessages s
+                                       state' <- foldM senderAct state ms
+                                       tempoSenderLoop s state'
 
-senderAct c tempoState (Message "/cps" [Float cps]) =
-  do tempoState' <- updateTempo tempoState (realToFrac cps)
-     sendTempo c tempoState'
-     return tempoState'
+senderAct :: ServerState -> Message -> IO ServerState
+senderAct (tempo, cs) (Message "/cps" [Float cps]) =
+  do tempo' <- updateTempo tempo (realToFrac cps)
+     state' <- sendTempo (tempo', cs)
+     return state'
 
-senderAct c tempoState (Message "/ping" _) =
-  do sendTempo c tempoState
-     return tempoState
+senderAct (tempo, cs) (Message "/subscribe" [Int32 p]) 
+  | null $ filter ((== (fromIntegral p)) . port) cs
+    = do s <- openUDP "127.0.0.1" (fromIntegral p)
+         let c = Client {port = (fromIntegral p), udp = s, failures = 0}
+         sendTempo (tempo, [c])
+         putStrLn $ "subscribed " ++ (show p)
+         return (tempo, c:cs)
+  | otherwise = do putStrLn ("port " ++ (show p) ++ " already subscribed")
+                   return (tempo, cs)
 
-senderAct _ tempoState (Message s _) = do putStrLn $ "Received unknown command " ++ s
-                                          return tempoState
+senderAct state (Message s _) = do putStrLn $ "Received unknown command " ++ s
+                                   return state
 
-waitForTempo :: MVar Tempo -> IO ()
-waitForTempo mTempo = do t <- readMVar mTempo
-                         check t
-                           where check t | paused t = do ping
-                                                         threadDelay 1000000
-                                                         waitForTempo mTempo
-                                         | otherwise = return ()
+waitForTempo :: MVar Tempo -> Int -> IO ()
+waitForTempo mTempo p = do t <- readMVar mTempo
+                           check t
+                             where check t | paused t = do subscribe p
+                                                           threadDelay 1000000
+                                                           waitForTempo mTempo p
+                                           | otherwise = return ()
 
 tempoReceiver :: IO (MVar Tempo)
 tempoReceiver = do now <- getCurrentTime
@@ -106,14 +120,15 @@ tempoReceiver = do now <- getCurrentTime
                    putStrLn "make socket to receive"
                    sock <- N.socket N.AF_INET N.Datagram 0
                    -- N.setSocketOptiSocketon sock N.NoDelay 1
-                   N.setSocketOption sock N.ReuseAddr 1
+                   -- N.setSocketOption sock N.ReuseAddr 1
                    -- N.setSocketOption sock N.ReusePort 1
                    a <- N.inet_addr "0.0.0.0"
-                   let sa = N.SockAddrInet (fromIntegral 6040) a
+                   let sa = N.SockAddrInet (fromIntegral 0) a
                    N.bind sock sa
                    let s = UDP sock
+                   p <- udpPort s
                    forkIO $ tempoReceiverLoop s mTempo
-                   waitForTempo mTempo
+                   waitForTempo mTempo p
                    return mTempo
 
 tempoReceiverLoop :: UDP -> MVar Tempo -> IO ()
@@ -152,16 +167,17 @@ clients = do putStrLn "make socket to send"
              let s = UDP sock
              return s
 
-sendTempo :: UDP -> Tempo -> IO ()
-sendTempo sock t = do putStrLn "sendTempo"
-                      sendOSC sock m
+sendTempo :: ServerState -> IO (ServerState)
+sendTempo (tempo, cs) = do putStrLn "sendTempo"
+                           mapM_ (\c -> sendOSC (udp c) m) cs
+                           return (tempo, cs)
   where m = Message "/tempo" [int32 sec,
                               int32 usec,
-                              float (realToFrac $ beat t),
-                              float (realToFrac $ cps t),
-                              string (show $ paused t)
+                              float (realToFrac $ beat tempo),
+                              float (realToFrac $ cps tempo),
+                              string (show $ paused tempo)
                              ]
-        ut = utc_to_ut $ at t
+        ut = utc_to_ut $ at tempo
         sec = floor ut
         usec = floor ((ut - (fromIntegral sec)) * 1000000)
 
@@ -179,7 +195,8 @@ beatNow t = do now <- getCurrentTime
                return $ beat t + beatDelta
 
 cpsUtils' :: IO ((Float -> IO (), (Float -> IO ()), IO Rational))
-cpsUtils' = do mTempo <- tempoReceiver
+cpsUtils' = do tempoSender
+               mTempo <- tempoReceiver
                let currentTime = do tempo <- readMVar mTempo
                                     now <- beatNow tempo
                                     return $ toRational now
