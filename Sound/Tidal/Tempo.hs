@@ -105,9 +105,9 @@ senderAct state (Message "/subscribe" [Int32 p])
          let c = Client {port = (fromIntegral p), udp = s, failures = 0}
          sendTempo (tempo state) [c]
          putStrLn $ "subscribed " ++ (show p)
-         return $ state {clients = (c:cs)}
+         return $ state {clients = (c:clients state)}
   | otherwise = do putStrLn ("port " ++ (show p) ++ " already subscribed")
-                   return (t, cs)
+                   return state
 
 senderAct state (Message s _) = do putStrLn $ "Received unknown command " ++ s
                                    return state
