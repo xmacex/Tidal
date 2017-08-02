@@ -27,7 +27,10 @@ data Tempo = Tempo {at :: UTCTime,
 data ServerMode = Master
                 | Slave UDP
 
-type ServerState = (Tempo, [Client], ServerMode)
+data ServerState = ServerState {tempo :: Tempo,
+                                clients :: [Client],
+                                mode :: ServerMode
+                               }
 
 instance Show Tempo where
   show x = (show (at x) ++ ", " ++
@@ -83,7 +86,7 @@ tempoSender = forkIO $ do now <- getCurrentTime
                           port <- getSenderPort
                           let t = Tempo now 0 1 False 0
                           s <- udpServer ip port
-                          tempoSenderLoop s (t, [])
+                          tempoSenderLoop s (ServerState t [] Master)
                             where tempoSenderLoop :: UDP -> ServerState -> IO ()
                                   tempoSenderLoop s state =
                                     do ms <- recvMessages s
@@ -91,18 +94,18 @@ tempoSender = forkIO $ do now <- getCurrentTime
                                        tempoSenderLoop s state'
 
 senderAct :: ServerState -> Message -> IO ServerState
-senderAct (t, cs) (Message "/cps" [Float cps]) =
-  do t' <- updateTempo t (realToFrac cps)
-     state' <- sendTempo (t', cs)
-     return state'
+senderAct state (Message "/cps" [Float cps]) =
+  do t <- updateTempo (tempo state) (realToFrac cps)
+     cs <- sendTempo (tempo state) (clients state)
+     return state {tempo = t, clients = cs}
 
-senderAct (t, cs) (Message "/subscribe" [Int32 p]) 
-  | null $ filter ((== (fromIntegral p)) . port) cs
+senderAct state (Message "/subscribe" [Int32 p]) 
+  | null $ filter ((== (fromIntegral p)) . port) (clients state)
     = do s <- openUDP "127.0.0.1" (fromIntegral p)
          let c = Client {port = (fromIntegral p), udp = s, failures = 0}
-         sendTempo (t, [c])
+         sendTempo (tempo state) [c]
          putStrLn $ "subscribed " ++ (show p)
-         return (t, c:cs)
+         return $ state {clients = (c:cs)}
   | otherwise = do putStrLn ("port " ++ (show p) ++ " already subscribed")
                    return (t, cs)
 
@@ -159,6 +162,7 @@ act "/tempo" mTempo m | isJust t = do swapMVar mTempo (fromJust t)
 act x mTempo _ = do putStrLn ("no act for" ++ x)
                     return ()
 
+{-
 clients = do putStrLn "make socket to send"
              sock <- N.socket N.AF_INET N.Datagram 0
              -- N.setSocketOptiSocketon sock N.NoDelay 1
@@ -169,11 +173,13 @@ clients = do putStrLn "make socket to send"
              N.connect sock sa
              let s = UDP sock
              return s
+-}
 
-sendTempo :: ServerState -> IO (ServerState)
-sendTempo (t, cs) = do putStrLn "sendTempo"
-                       mapM_ (\c -> sendOSC (udp c) m) cs
-                       return (t, cs)
+sendTempo :: Tempo -> [Client] -> IO [Client]
+sendTempo t cs = do putStrLn "sendTempo"
+                    -- TODO exception handling
+                    mapM_ (\c -> sendOSC (udp c) m) cs
+                    return cs
   where m = Message "/tempo" [int32 sec,
                               int32 usec,
                               float (realToFrac $ beat t),
