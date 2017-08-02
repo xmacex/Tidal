@@ -24,7 +24,10 @@ data Tempo = Tempo {at :: UTCTime,
                     nudged :: Double
                    }
 
-type ServerState = (Tempo, [Client])
+data ServerMode = Master
+                | Slave UDP
+
+type ServerState = (Tempo, [Client], ServerMode)
 
 instance Show Tempo where
   show x = (show (at x) ++ ", " ++
@@ -78,9 +81,9 @@ tempoSender :: IO (ThreadId)
 tempoSender = forkIO $ do now <- getCurrentTime
                           ip <- getSenderIp
                           port <- getSenderPort
-                          let tempo = Tempo now 0 1 False 0
+                          let t = Tempo now 0 1 False 0
                           s <- udpServer ip port
-                          tempoSenderLoop s (tempo, [])
+                          tempoSenderLoop s (t, [])
                             where tempoSenderLoop :: UDP -> ServerState -> IO ()
                                   tempoSenderLoop s state =
                                     do ms <- recvMessages s
@@ -88,20 +91,20 @@ tempoSender = forkIO $ do now <- getCurrentTime
                                        tempoSenderLoop s state'
 
 senderAct :: ServerState -> Message -> IO ServerState
-senderAct (tempo, cs) (Message "/cps" [Float cps]) =
-  do tempo' <- updateTempo tempo (realToFrac cps)
-     state' <- sendTempo (tempo', cs)
+senderAct (t, cs) (Message "/cps" [Float cps]) =
+  do t' <- updateTempo t (realToFrac cps)
+     state' <- sendTempo (t', cs)
      return state'
 
-senderAct (tempo, cs) (Message "/subscribe" [Int32 p]) 
+senderAct (t, cs) (Message "/subscribe" [Int32 p]) 
   | null $ filter ((== (fromIntegral p)) . port) cs
     = do s <- openUDP "127.0.0.1" (fromIntegral p)
          let c = Client {port = (fromIntegral p), udp = s, failures = 0}
-         sendTempo (tempo, [c])
+         sendTempo (t, [c])
          putStrLn $ "subscribed " ++ (show p)
-         return (tempo, c:cs)
+         return (t, c:cs)
   | otherwise = do putStrLn ("port " ++ (show p) ++ " already subscribed")
-                   return (tempo, cs)
+                   return (t, cs)
 
 senderAct state (Message s _) = do putStrLn $ "Received unknown command " ++ s
                                    return state
@@ -168,16 +171,16 @@ clients = do putStrLn "make socket to send"
              return s
 
 sendTempo :: ServerState -> IO (ServerState)
-sendTempo (tempo, cs) = do putStrLn "sendTempo"
-                           mapM_ (\c -> sendOSC (udp c) m) cs
-                           return (tempo, cs)
+sendTempo (t, cs) = do putStrLn "sendTempo"
+                       mapM_ (\c -> sendOSC (udp c) m) cs
+                       return (t, cs)
   where m = Message "/tempo" [int32 sec,
                               int32 usec,
-                              float (realToFrac $ beat tempo),
-                              float (realToFrac $ cps tempo),
-                              string (show $ paused tempo)
+                              float (realToFrac $ beat t),
+                              float (realToFrac $ cps t),
+                              string (show $ paused t)
                              ]
-        ut = utc_to_ut $ at tempo
+        ut = utc_to_ut $ at t
         sec = floor ut
         usec = floor ((ut - (fromIntegral sec)) * 1000000)
 
@@ -197,8 +200,8 @@ beatNow t = do now <- getCurrentTime
 cpsUtils' :: IO ((Float -> IO (), (Float -> IO ()), IO Rational))
 cpsUtils' = do tempoSender
                mTempo <- tempoReceiver
-               let currentTime = do tempo <- readMVar mTempo
-                                    now <- beatNow tempo
+               let currentTime = do t <- readMVar mTempo
+                                    now <- beatNow t
                                     return $ toRational now
                return (sendCPS, sendNudge, currentTime)
 
@@ -224,26 +227,26 @@ clockedTick tpb callback =
          nextTick = ceiling (nowBeat * (fromIntegral tpb))
      loop mTempo nextTick
   where loop mTempo tick = 
-          do tempo <- readMVar mTempo
-             tick' <- doTick tempo tick
+          do t <- readMVar mTempo
+             tick' <- doTick t tick
              loop mTempo tick'
-        doTick tempo tick | paused tempo =
+        doTick t tick | paused t =
           do let pause = 0.01
              -- TODO - do this via blocking read on the mvar somehow
              -- rather than polling
              threadDelay $ floor (pause * 1000000)
              -- reset tick to 0 if cps is negative
-             return $ if cps tempo < 0 then 0 else tick
+             return $ if cps t < 0 then 0 else tick
                           | otherwise =
           do now <- getCurrentTime
-             let tps = (fromIntegral tpb) * cps tempo
-                 delta = realToFrac $ diffUTCTime now (at tempo)
-                 actualTick = ((fromIntegral tpb) * beat tempo) + (tps * delta)
+             let tps = (fromIntegral tpb) * cps t
+                 delta = realToFrac $ diffUTCTime now (at t)
+                 actualTick = ((fromIntegral tpb) * beat t) + (tps * delta)
                  -- only wait by up to two ticks
                  tickDelta = min 2 $ (fromIntegral tick) - actualTick
                  delay = tickDelta / tps
              threadDelay $ floor (delay * 1000000)
-             callback tempo tick
+             callback t tick
              let newTick | (abs $ (floor actualTick) - tick) > 4 = floor actualTick
                          | otherwise = tick + 1
              return $ newTick
