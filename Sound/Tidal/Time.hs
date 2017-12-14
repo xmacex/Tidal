@@ -24,7 +24,7 @@ type Arc = (Time, Time)
 -- arcs being split or truncated. In such cases, the first arc is
 -- preserved, but the second arc reflects the portion of the event
 -- which is relevant.
-type Event a = (Arc, Arc, a)
+type Event a = (Arc, Arc, Maybe a)
 
 -- | The starting point of the current cycle. A cycle occurs from each
 -- natural number to the next, so this is equivalent to @floor@.

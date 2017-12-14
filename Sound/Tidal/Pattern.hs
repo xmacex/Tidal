@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -fno-warn-name-shadowing #-}
 
 module Sound.Tidal.Pattern where
@@ -140,7 +141,7 @@ showEvent e@(_, b, v) = concat[on, show v, off,
             | otherwise = ".."
 
 instance Functor Pattern where
-  fmap f (Pattern a) = Pattern $ fmap (fmap (mapThd' f)) a
+  fmap f (Pattern a) = Pattern $ fmap (fmap (mapThd' (fmap f))) a
 
 -- | @pure a@ returns a pattern with an event with value @a@, which
 -- has a duration of one cycle, and repeats every cycle.
@@ -148,14 +149,14 @@ instance Applicative Pattern where
   pure x = Pattern $ \(s, e) -> map
                                 (\t -> ((t%1, (t+1)%1),
                                         (t%1, (t+1)%1),
-                                        x
+                                        Just x
                                        )
                                 )
                                 [floor s .. ((ceiling e) - 1)]
   (Pattern fs) <*> (Pattern xs) =
     Pattern $ \a -> concatMap applyX (fs a)
     where applyX ((s,e), (s', e'), f) =
-            map (\(_, _, x) -> ((s,e), (s', e'), f x))
+            map (\(_, _, x) -> ((s,e), (s', e'), ($) <$> f <*> x))
                 (filter
                  (\(_, a', _) -> isIn a' s)
                  (xs (s',e'))
@@ -173,10 +174,11 @@ instance Monad Pattern where
   p >>= f = unwrap (f <$> p)
 
 unwrap :: Pattern (Pattern a) -> Pattern a
-unwrap p = Pattern $ \a -> concatMap (\(_, outerPart, p') -> catMaybes $ map (munge outerPart) $ arc p' a) (arc p a)
+unwrap p = Pattern $ \a -> concatMap (\(_, outerPart, p') -> catMaybes $ map (munge outerPart) $ maybeArc p' a) (arc p a)
   where munge a (whole,part,v) = do part' <- subArc a part
                                     return (whole, part',v)
-
+        maybeArc (Just p) a = arc p a
+        maybeArc Nothing _ = []
 
 -- | @atom@ is a synonym for @pure@.
 atom :: a -> Pattern a
@@ -217,7 +219,8 @@ withEvent f p = Pattern $ \a -> map f $ arc p a
 -- | @timedValues p@ returns a new @Pattern@ where values are turned
 -- into tuples of @Arc@ and value.
 timedValues :: Pattern a -> Pattern (Arc, a)
-timedValues = withEvent (\(a,a',v) -> (a,a',(a,v)))
+timedValues = withEvent f
+  where f (a,a', v) = (a,a', (a,) <$> v)
 
 -- | @overlay@ combines two @Pattern@s into a new pattern, so that
 -- their events are combined over time. This is the same as the infix
@@ -279,7 +282,7 @@ listToPat :: [a] -> Pattern a
 listToPat = fastcat . map atom
 
 patToList :: Pattern a -> [a]
-patToList p = map (thd') $ sortBy (\a b -> compare (snd' a) (snd' b)) $ filter ((\x -> x >= 0 && x < 1) . fst . snd' ) (arc p (0,1))
+patToList p = catMaybes $ map (thd') $ sortBy (\a b -> compare (snd' a) (snd' b)) $ filter ((\x -> x >= 0 && x < 1) . fst . snd' ) (arc p (0,1))
 
 -- | @maybeListToPat@ is similar to @listToPat@, but allows values to
 -- be optional using the @Maybe@ type, so that @Nothing@ results in
@@ -519,7 +522,7 @@ foldEvery ns f p = foldr ($) p (map (\x -> _every x f) ns)
 sig :: (Time -> a) -> Pattern a
 sig f = Pattern f'
   where f' (s,e) | s > e = []
-                 | otherwise = [((s,e), (s,e), f s)]
+                 | otherwise = [((s,e), (s,e), Just $ f s)]
 
 -- | @sinewave@ returns a @Pattern@ of continuous @Double@ values following a
 -- sinewave with frequency of one cycle, and amplitude from 0 to 1.
@@ -740,11 +743,18 @@ spreadChoose f vs p = do v <- discretise 1 (choose vs)
 spreadr :: (t -> t1 -> Pattern b) -> [t] -> t1 -> Pattern b
 spreadr = spreadChoose
 
+-- Turns matching values into silences
 filterValues :: (a -> Bool) -> Pattern a -> Pattern a
-filterValues f (Pattern x) = Pattern $ (filter (f . thd')) . x
+filterValues f (Pattern x) = Pattern $ fmap (mapThd' f') . x
+  where f' Nothing = Nothing
+        f' (Just v) | f v = Just v
+                    | otherwise = Nothing
 
 filterJust :: Pattern (Maybe a) -> Pattern a
 filterJust p = fromJust <$> (filterValues (isJust) p)
+
+filterSilence :: Pattern a -> Pattern a
+filterSilence p = Pattern $ \a -> filter (isJust . thd') $ arc p a
 
 -- Filter out events that have had their onsets cut off
 filterOnsets :: Pattern a -> Pattern a
@@ -763,7 +773,7 @@ filterOnsetsInRange = filterOnsets . filterStartInRange
 -- Samples some events from a pattern, returning a list of onsets
 -- (relative to the given arc), deltas (durations) and values.
 seqToRelOnsetDeltas :: Arc -> Pattern a -> [(Double, Double, a)]
-seqToRelOnsetDeltas (s, e) p = map (\((s', e'), _, x) -> (fromRational $ (s'-s) / (e-s), fromRational $ (e'-s) / (e-s), x)) $ arc (filterOnsetsInRange p) (s, e)
+seqToRelOnsetDeltas (s, e) p = map (\((s', e'), _, Just x) -> (fromRational $ (s'-s) / (e-s), fromRational $ (e'-s) / (e-s), x)) $ arc (filterOnsetsInRange $ filterSilence p) (s, e)
 
 segment :: Pattern a -> Pattern [a]
 segment p = Pattern $ \(s,e) -> filter (\(_,(s',e'),_) -> s' < e && e' > s) $ groupByTime (segment' (arc p (s,e)))
@@ -783,7 +793,7 @@ points ((_,(s,e), _):es) = s:e:(points es)
 
 groupByTime :: [Event a] -> [Event [a]]
 groupByTime es = map mrg $ groupBy ((==) `on` snd') $ sortBy (compare `on` snd') es
-  where mrg es@((a, a', _):_) = (a, a', map thd' es)
+  where mrg es@((a, a', _):_) = (a, a', Just $ catMaybes $ map thd' es)
         mrg _ = error "groupByTime"
 
 
@@ -836,7 +846,7 @@ d1 $ jux (|+| ((1024 <~) $ gain rand)) $ sound "sn sn ~ sn" # gain rand
 @
 -}
 rand :: Pattern Double
-rand = Pattern $ \a -> [(a, a, timeToRand $ (midPoint a))]
+rand = Pattern $ \a -> [(a, a, Just $ timeToRand $ (midPoint a))]
 
 timeToRand :: RealFrac r => r -> Double
 timeToRand t = fst $ randomDouble $ pureMT $ floor $ (*1000000) t
@@ -1153,105 +1163,6 @@ index :: Real b => b -> Pattern b -> Pattern c -> Pattern c
 index sz indexpat pat = spread' (zoom' $ toRational sz) (toRational . (*(1-sz)) <$> indexpat) pat
   where zoom' sz start = zoom (start, start+sz)
 
--- | @prrw f rot (blen, vlen) beatPattern valuePattern@: pattern rotate/replace.
-prrw :: (a -> b -> c) -> Int -> (Time, Time) -> Pattern a -> Pattern b -> Pattern c
-prrw f rot (blen, vlen) beatPattern valuePattern =
-  let
-    ecompare (_,e1,_) (_,e2,_) = compare (fst e1) (fst e2)
-    beats  = sortBy ecompare $ arc beatPattern (0, blen)
-    values = fmap thd' . sortBy ecompare $ arc valuePattern (0, vlen)
-    cycles = blen * (fromIntegral $ lcm (length beats) (length values) `div` (length beats))
-  in
-    _slow cycles $ stack $ zipWith
-    (\( _, (start, end), v') v -> (start `rotR`) $ densityGap (1 / (end - start)) $ pure (f v' v))
-    (sortBy ecompare $ arc (_density cycles $ beatPattern) (0, blen))
-    (drop (rot `mod` length values) $ cycle values)
-
--- | @prr rot (blen, vlen) beatPattern valuePattern@: pattern rotate/replace.
-prr :: Int -> (Time, Time) -> Pattern String -> Pattern b -> Pattern b
-prr = prrw $ flip const
-
-{-|
-@preplace (blen, plen) beats values@ combines the timing of @beats@ with the values
-of @values@. Other ways of saying this are:
-* sequential convolution
-* @values@ quantized to @beats@.
-
-Examples:
-
-@
-d1 $ sound $ preplace (1,1) "x [~ x] x x" "bd sn"
-d1 $ sound $ preplace (1,1) "x(3,8)" "bd sn"
-d1 $ sound $ "x(3,8)" <~> "bd sn"
-d1 $ sound "[jvbass jvbass:5]*3" |+| (shape $ "1 1 1 1 1" <~> "0.2 0.9")
-@
-
-It is assumed the pattern fits into a single cycle. This works well with
-pattern literals, but not always with patterns defined elsewhere. In those cases
-use @preplace@ and provide desired pattern lengths:
-@
-let p = slow 2 $ "x x x"
-
-d1 $ sound $ preplace (2,1) p "bd sn"
-@
--}
-preplace :: (Time, Time) -> Pattern String -> Pattern b -> Pattern b
-preplace = preplaceWith $ flip const
-
--- | @prep@ is an alias for preplace.
-prep :: (Time, Time) -> Pattern String -> Pattern b -> Pattern b
-prep = preplace
-
-preplace1 :: Pattern String -> Pattern b -> Pattern b
-preplace1 = preplace (1, 1)
-
-preplaceWith :: (a -> b -> c) -> (Time, Time) -> Pattern a -> Pattern b -> Pattern c
-preplaceWith f (blen, plen) = prrw f 0 (blen, plen)
-
-prw :: (a -> b -> c) -> (Time, Time) -> Pattern a -> Pattern b -> Pattern c
-prw = preplaceWith
-
-preplaceWith1 :: (a -> b -> c) -> Pattern a -> Pattern b -> Pattern c
-preplaceWith1 f = prrw f 0 (1, 1)
-
-prw1 :: (a -> b -> c) -> Pattern a -> Pattern b -> Pattern c
-prw1 = preplaceWith1
-
-(<~>) :: Pattern String -> Pattern b -> Pattern b
-(<~>) = preplace (1, 1)
-
--- | @protate len rot p@ rotates pattern @p@ by @rot@ beats to the left.
--- @len@: length of the pattern, in cycles.
--- Example: @d1 $ every 4 (protate 2 (-1)) $ slow 2 $ sound "bd hh hh hh"@
-protate :: Time -> Int -> Pattern a -> Pattern a
-protate len rot p = prrw (flip const) rot (len, len) p p
-
-prot :: Time -> Int -> Pattern a -> Pattern a
-prot = protate
-
-prot1 :: Int -> Pattern a -> Pattern a
-prot1 = protate 1
-
-{-| The @<<~@ operator rotates a unit pattern to the left, similar to @<~@,
-but by events rather than linear time. The timing of the pattern remains constant:
-
-@
-d1 $ (1 <<~) $ sound "bd ~ sn hh"
--- will become
-d1 $ sound "sn ~ hh bd"
-@ -}
-
-(<<~) :: Int -> Pattern a -> Pattern a
-(<<~) = protate 1
-
--- | @~>>@ is like @<<~@ but for shifting to the right.
-(~>>) :: Int -> Pattern a -> Pattern a
-(~>>) = (<<~) . (0-)
-
--- | @pequal cycles p1 p2@: quickly test if @p1@ and @p2@ are the same.
-pequal :: Ord a => Time -> Pattern a -> Pattern a -> Bool
-pequal cycles p1 p2 = (sort $ arc p1 (0, cycles)) == (sort $ arc p2 (0, cycles))
-
 -- | @discretise n p@: 'samples' the pattern @p@ at a rate of @n@
 -- events per cycle. Useful for turning a continuous pattern into a
 -- discrete one.
@@ -1313,7 +1224,7 @@ The above fits three samples into the pattern, i.e. for the first cycle this wil
 
 -}
 fit :: Int -> [a] -> Pattern Int -> Pattern a
-fit perCycle xs p = (xs !!!) <$> (Pattern $ \a -> map ((\e -> (mapThd' (+ (cyclePos perCycle e)) e))) (arc p a))
+fit perCycle xs p = (xs !!!) <$> (Pattern $ \a -> map ((\e -> (mapThd' (fmap (+ (cyclePos perCycle e))) e))) (arc p a))
   where cyclePos perCycle e = perCycle * (floor $ eventStart e)
 
 permstep :: RealFrac b => Int -> [a] -> Pattern b -> Pattern a
@@ -1352,16 +1263,20 @@ randArcs n =
              pairUp' (a:b:[]) = [(a,1)]
              pairUp' (a:b:xs) = (a,b):(pairUp' (b:xs))
 
+randStruct :: Int -> Pattern Int
 randStruct n = splitQueries $ Pattern f
   where f (s,e) = mapSnds' fromJust $ filter (\(_,x,_) -> isJust x) $ as
           where as = map (\(n, (s',e')) -> ((s' + sam s, e' + sam s),
                                            subArc (s,e) (s' + sam s, e' + sam s),
-                                           n
+                                           Just n
                                           )
-                         ) $ enumerate $ thd' $ head $ arc (randArcs n) (sam s, nextSam s)
+                         ) $ enumerate $ fromJust $ thd' $ head $ arc (randArcs n) (sam s, nextSam s)
 
+-- TODO - what is this doing and is the behaviour right for silences?
 substruct' :: Pattern Int -> Pattern a -> Pattern a
-substruct' s p = Pattern $ \a -> concatMap (\(a', _, i) -> arc (compressTo a' (inside (pure $ 1/toRational(length (arc s (sam (fst a), nextSam (fst a))))) (rotR (toRational i)) p)) a') (arc s a)
+substruct' s p = Pattern $ \a -> concatMap (f a) (arc s a)
+  where f a (a', _, Just i) = arc (compressTo a' (inside (pure $ 1/toRational(length (arc s (sam (fst a), nextSam (fst a))))) (rotR (toRational i)) p)) a'
+        f a _ = []
 
 -- | @stripe n p@: repeats pattern @p@, @n@ times per cycle. So
 -- similar to @fast@, but with random durations. The repetitions will
@@ -1409,10 +1324,13 @@ lindenmayer 1 r (c:cs) = (fromMaybe [c] $ lookup c $ parseLMRule' r)
                          ++ (lindenmayer 1 r cs)
 lindenmayer n r s = iterate (lindenmayer 1 r) s !! n
 
+-- TODO - I don't think this should ignore the snd' parameter here
 -- support for fit'
 unwrap' :: Pattern (Pattern a) -> Pattern a
 unwrap' pp = Pattern $ \a -> arc (stack $ map scalep (arc pp a)) a
-  where scalep ev = compress (fst' ev) $ thd' ev
+  where scalep :: Event (Pattern a) -> Pattern a
+        scalep (a, _, Just p) = compress a p
+        scalep (a, _, Nothing) = silence
 
 {-|
 Removes events from second pattern that don't start during an event from first.
@@ -1556,7 +1474,7 @@ swing = swingBy (pure $ 1%3)
 {- | `cycleChoose` is like `choose` but only picks a new item from the list
 once each cycle -}
 cycleChoose::[a] -> Pattern a
-cycleChoose xs = Pattern $ \(s,e) -> [((s,e),(s,e), xs!!(floor $ (dlen xs)*(ctrand s) ))]
+cycleChoose xs = Pattern $ \(s,e) -> [((s,e),(s,e), Just $ xs!!(floor $ (dlen xs)*(ctrand s) ))]
   where dlen xs = fromIntegral $ length xs
         ctrand s = (timeToRand :: Time -> Double) $ fromIntegral $ (floor :: Time -> Int) $ sam s
 
@@ -1626,7 +1544,9 @@ spaceOut xs p = _slow (toRational $ sum xs) $ stack $ map (\a -> compress a p) $
 -- | @flatpat@ takes a Pattern of lists and pulls the list elements as
 -- separate Events
 flatpat :: Pattern [a] -> Pattern a
-flatpat p = Pattern $ \a -> (concatMap (\(b,b',xs) -> map (\x -> (b,b',x)) xs) $ arc p a)
+flatpat p = Pattern $ \a -> (concatMap f $ arc p a)
+  where f (b,b',Just xs) = map (\x -> (b,b',Just x)) xs
+        f (b,b',Nothing) = [(b,b',Nothing)]
 
 -- | @layer@ takes a Pattern of lists and pulls the list elements as
 -- separate Events
@@ -1656,7 +1576,7 @@ fill p' p = struct (splitQueries $ Pattern (f p)) p'
                           | e > s' && e < e' = [(e,e')] -- cut off left
                           | s <= s' && e >= e' = [] -- swallow
                           | otherwise = [(s',e')] -- miss
-    arcToEvent a = (a,a,"x")
+    arcToEvent a = (a,a, Just "x")
     removeTolerance (s,e) es = concatMap (expand) $ mapSnds' f es
       where f (a) = concatMap (remove' (e,e+tolerance)) $ remove' (s-tolerance,s) a
             expand (a,xs,c) = map (\x -> (a,x,c)) xs

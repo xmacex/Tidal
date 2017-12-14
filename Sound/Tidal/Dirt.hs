@@ -342,7 +342,8 @@ would be `"[0.25 ~] 0.5"`.
 
 durPattern :: Pattern a -> Pattern Time
 durPattern p = Pattern $ \a -> map eventLengthEvent $ arc p a
-  where eventLengthEvent (a1@(s1,e1), a2, x) = (a1, a2, e1-s1)
+  where eventLengthEvent (a1@(s1,e1), a2, Just x) = (a1, a2, Just $ e1-s1)
+        eventLengthEvent (a1@(s1,e1), a2, Nothing) = (a1, a2, Nothing)
 
 {- | @durPattern'@ is similar to @durPattern@, but does some lookahead to try
 to find the length of time to the *next* event. For example, the result of
@@ -351,7 +352,9 @@ to find the length of time to the *next* event. For example, the result of
 
 durPattern' :: Pattern a -> Pattern Time
 durPattern' p = Pattern $ \a@(s,e) -> map (eventDurToNext (arc p (s,e+1))) (arc p a)
-      where eventDurToNext evs ev@(a1,a2,x) = (a1, a2, (nextNum (t ev) (mt evs)) - (t ev))
+      where eventDurToNext evs ev@(a1,a2,Just x) = (a1, a2, Just $ (nextNum (t ev) (mt evs)) - (t ev))
+            eventDurToNext _ ev@(a1,a2,Nothing) = (a1,a2,Nothing)
+--      where eventDurToNext evs ev@(a1,a2, Just x) = (a1, a2, (Just $ nextNum (t ev) (mt evs)) - (t ev))
             t = fst . fst'
             mt = (map fst) . (map fst')
             nextNum a = head . sort . filter (\x -> x >a)

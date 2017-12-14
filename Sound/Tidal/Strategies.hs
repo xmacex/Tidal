@@ -236,9 +236,10 @@ chop = temporalParam _chop
 _chop :: Int -> ParamPattern -> ParamPattern
 _chop n p = Pattern $ \queryA -> concatMap (f queryA) $ arcCycles queryA
   where f queryA a = concatMap (chopEvent queryA) (arc p a)
-        chopEvent (queryS, queryE) (a,_a',v) = map (newEvent v) $ filter (\(_, (s,e)) -> not $ or [e < queryS, s >= queryE]) (enumerate $ chopArc a n)
+        chopEvent (queryS, queryE) (a,_a', Just v) = map (newEvent v) $ filter (\(_, (s,e)) -> not $ or [e < queryS, s >= queryE]) (enumerate $ chopArc a n)
+        chopEvent _ _ = []
         newEvent :: ParamMap -> (Int, Arc) -> Event ParamMap
-        newEvent v (i, a) = (a,a,Map.insert (param dirt "end") (VF ((fromIntegral $ i+1)/(fromIntegral n))) $ Map.insert (param dirt "begin") (VF ((fromIntegral i)/(fromIntegral n))) v)
+        newEvent v (i, a) = (a,a,Just $ Map.insert (param dirt "end") (VF ((fromIntegral $ i+1)/(fromIntegral n))) $ Map.insert (param dirt "begin") (VF ((fromIntegral i)/(fromIntegral n))) v)
 
 
 {- | `gap` is similar to `chop` in that it granualizes every sample in place as it is played,
@@ -256,9 +257,10 @@ gap = temporalParam _gap
 _gap :: Int -> ParamPattern -> ParamPattern
 _gap n p = Pattern $ \queryA -> concatMap (f queryA) $ arcCycles queryA
      where f queryA a = concatMap (chopEvent queryA) (arc p a)
-           chopEvent (queryS, queryE) (a,_a',v) = map (newEvent v) $ filter (\(_, (s,e)) -> not $ or [e < queryS, s >= queryE]) (enumerate $ everyOther $ chopArc a n)
+           chopEvent (queryS, queryE) (a,_a',Just v) = map (newEvent v) $ filter (\(_, (s,e)) -> not $ or [e < queryS, s >= queryE]) (enumerate $ everyOther $ chopArc a n)
+           chopEvent _ _ = []
            newEvent :: ParamMap -> (Int, Arc) -> Event ParamMap
-           newEvent v (i, a) = (a,a,Map.insert (param dirt "end") (VF ((fromIntegral $ i+1)/(fromIntegral n))) $ Map.insert (param dirt "begin") (VF ((fromIntegral i)/(fromIntegral n))) v)
+           newEvent v (i, a) = (a,a,Just $ Map.insert (param dirt "end") (VF ((fromIntegral $ i+1)/(fromIntegral n))) $ Map.insert (param dirt "begin") (VF ((fromIntegral i)/(fromIntegral n))) v)
            everyOther (x:_:xs) = x:everyOther xs
            everyOther xs = xs
 
