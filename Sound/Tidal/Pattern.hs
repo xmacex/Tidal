@@ -184,9 +184,16 @@ unwrap p = Pattern $ \a -> concatMap (\(_, outerPart, p') -> catMaybes $ map (mu
 atom :: a -> Pattern a
 atom = pure
 
--- | @silence@ returns a pattern with no events.
+-- | @silence@ returns a pattern with a single empty event per cycle.
 silence :: Pattern a
-silence = Pattern $ const []
+silence = Pattern $ \(s, e) -> map
+                               (\t -> ((t%1, (t+1)%1),
+                                        (t%1, (t+1)%1),
+                                        Nothing
+                                      )
+                               )
+                               [floor s .. ((ceiling e) - 1)]
+
 
 -- | @withQueryArc f p@ returns a new @Pattern@ with function @f@
 -- applied to the @Arc@ values passed to the original @Pattern@ @p@.
