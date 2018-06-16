@@ -641,11 +641,11 @@ envLR = (1-) <$> envL
 
 -- 'Equal power' for gain-based transitions
 envEq :: Pattern Double
-envEq = sig $ \t -> sqrt (sin (pi/2 * (max 0 $ min (fromRational (1-t)) 1)))
+envEq = sig $ \t -> sqrt (cos (pi/2 * (max 0 $ min (fromRational (1-t)) 1)))
 
 -- Equal power reversed
 envEqR :: Pattern Double
-envEqR = sig $ \t -> sqrt (cos (pi/2 * (max 0 $ min (fromRational (1-t)) 1)))
+envEqR = sig $ \t -> sqrt (sin (pi/2 * (max 0 $ min (fromRational (1-t)) 1)))
 
 fadeOut :: Time -> Pattern a -> Pattern a
 fadeOut n = spread' (_degradeBy) (_slow n $ envL)

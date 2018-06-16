@@ -281,7 +281,7 @@ Will fade over 16 cycles from "bd sn" to "jvbass*3"
 xfadeIn :: Time -> Time -> [ParamPattern] -> ParamPattern
 xfadeIn _ _ [] = silence
 xfadeIn _ _ (p:[]) = p
-xfadeIn t now (p:p':_) = overlay (p |*| gain (now `rotR` (_slow t envEqR))) (p' |*| gain (now `rotR` (_slow t (envEq))))
+xfadeIn t now (p:p':_) = overlay (p |*| gain (now `rotR` (_slow t envEq))) (p' |*| gain (now `rotR` (_slow t (envEqR))))
 
 {- |
 Crossfade between old and new pattern over the next two cycles.
