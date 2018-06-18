@@ -7,12 +7,12 @@ import Sound.Tidal.Utils
 import Control.Applicative
 
 -- | group multiple params into one
-grp :: [Param] -> Pattern String -> ParamPattern
-grp [] _ = silence
-grp params p = (fmap lookupPattern p)
-  where lookupPattern :: String -> ParamMap
-        lookupPattern s = Map.fromList $ map (\(param,s') -> toPV param s') $ zip params $ (split s)
-        split s = wordsBy (==':') s
+grp :: Functor a => [Param] -> a String -> a ParamMap
+grp params p = fmap (grp' params) p
+
+grp' :: [Param] -> String -> ParamMap
+grp' params s = Map.fromList $ map (\(param,s') -> toPV param s') $ zip params $ (split s)
+  where split s = wordsBy (==':') s
         toPV :: Param -> String -> (Param, Value)
         toPV param@(S _ _) s = (param, (VS s))
         toPV param@(F _ _) s = (param, (VF $ read s))
@@ -372,6 +372,8 @@ drumN _ = 0
 
 (ccn, ccn_p) = pF "ccn" Nothing
 (ccv, ccv_p) = pF "ccv" Nothing
+
+cc :: Pattern String -> ParamPattern
 cc = grp [ccn_p, ccv_p]
 
 (ctlNum, ctlNum_p) = pF "ctlNum" Nothing
