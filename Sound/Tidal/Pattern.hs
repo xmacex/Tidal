@@ -185,6 +185,10 @@ instance Monoid (Pattern a) where
 #endif
 -}
 
+instance Monoid (Pattern a) where
+  mempty = silence
+  mappend = overlay
+
 instance Monad Pattern where
   return = pure
 

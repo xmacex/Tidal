@@ -46,6 +46,22 @@ data TPat a = TPat_Atom a
             | TPat_pE (TPat Int) (TPat Int) (TPat Integer) (TPat a)
             deriving (Show)
 
+instance Functor TPat where
+  fmap f (TPat_Atom a) = TPat_Atom (f a)
+  fmap f (TPat_Density a b) = TPat_Density a $ fmap f b
+  fmap f (TPat_Slow a b) = TPat_Slow a $ fmap f b
+  fmap f (TPat_Zoom a b) = TPat_Zoom a $ fmap f b
+  fmap f (TPat_DegradeBy a b) = TPat_DegradeBy a $ fmap f b
+  fmap _ TPat_Silence = TPat_Silence
+  fmap _ TPat_Foot = TPat_Foot
+  fmap _ (TPat_Elongate a) = TPat_Elongate a
+  fmap f (TPat_EnumFromTo a b) = TPat_EnumFromTo (fmap f a) (fmap f b)
+  fmap f (TPat_Cat xs) = TPat_Cat (map (fmap f) xs)
+  fmap f (TPat_TimeCat xs) = TPat_TimeCat (map (fmap f) xs)
+  fmap f (TPat_Overlay a b) = TPat_Overlay (fmap f a) (fmap f b)
+  fmap f (TPat_ShiftL a b) = TPat_ShiftL a (fmap f b)
+  fmap f (TPat_pE a b c d) = TPat_pE a b c (fmap f d)
+
 {-
 #ifdef TIDAL_SEMIGROUP
 instance Sem.Semigroup (TPat a) where
@@ -203,7 +219,7 @@ r s orig = do E.handle
 parseRhythm :: Parseable a => Parser (TPat a) -> String -> TPat a
 parseRhythm f input = either (const TPat_Silence) id $ parse (pSequence f') "" input
   where f' = f
-             <|> do symbol "~" <?> "rest"
+             <|> do (symbol "~") <?> "rest"
                     return TPat_Silence
 
 pSequenceN :: Parseable a => Parser (TPat a) -> GenParser Char () (Int, TPat a)
@@ -415,7 +431,7 @@ pRatio = do s <- sign
                          d <- natural
                          return (n%d)
                       <|>
-                      do char '.'
+                      do char ';'
                          s <- many1 digit
                          -- A hack, but not sure if doing this
                          -- numerically would be any faster..
