@@ -57,10 +57,10 @@ right :: ParamPattern -> ParamPattern
 right = (# pan 1)
 
 higher :: ParamPattern -> ParamPattern
-higher = (|*| speed 1.5)
+higher = (|*| up 7)
 
 lower :: ParamPattern -> ParamPattern
-lower = (|*| speed 0.75)
+lower = (|*| up (-7))
 
 faster :: ParamPattern -> ParamPattern
 faster = hurry 2
@@ -68,3 +68,5 @@ faster = hurry 2
 slower :: ParamPattern -> ParamPattern
 slower = hurry 0.5
 
+play :: Pattern Double -> ParamPattern -> ParamPattern
+play x s = n x # s
