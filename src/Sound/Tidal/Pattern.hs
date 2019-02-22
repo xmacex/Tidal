@@ -215,7 +215,10 @@ data Nature = Analog | Digital
 
 -- | A datatype that's basically a query, plus a hint about whether its events
 -- are Analogue or Digital by nature
-data Pattern a = Pattern {nature :: Nature, query :: Query a}
+data Pattern a = Pattern {nature :: Nature,
+                          period :: Maybe Time,
+                          query :: Query a
+                         }
 
 data Value = VS { svalue :: String }
            | VF { fvalue :: Double }
@@ -234,10 +237,15 @@ instance Functor Pattern where
 
 instance Applicative Pattern where
   -- | Repeat the given value once per cycle, forever
-  pure v = Pattern Digital $ \(State a _) ->
-    map (\a' -> Event a' (sect a a') v) $ cycleArcsInArc a
+  pure v = Pattern
+           {nature = Digital,
+            period = Just 1,
+            query = \(State a _) ->
+               map (\a' -> Event a' (sect a a') v) $ cycleArcsInArc a
+           }
 
-  (<*>) pf@(Pattern Digital _) px@(Pattern Digital _) = Pattern Digital q
+  (<*>) pf@(Pattern Digital _ _) px@(Pattern Digital _ _)
+    = Pattern Digital Nothing q
     where q st = catMaybes $ concatMap match $ query pf st
             where
               match (Event fWhole fPart f) =
@@ -248,7 +256,8 @@ instance Applicative Pattern where
                      return (Event whole' part' (f x))
                 )
                 (query px $ st {arc = fPart})
-  (<*>) pf@(Pattern Digital _) px@(Pattern Analog _) = Pattern Digital q
+  (<*>) pf@(Pattern Digital _ _) px@(Pattern Analog _ _)
+    = Pattern Digital Nothing q
     where q st = concatMap match $ query pf st
             where
               match (Event fWhole fPart f) =
@@ -256,7 +265,8 @@ instance Applicative Pattern where
                 (Event fWhole fPart . f . value)
                 (query px $ st {arc = pure (start fPart)})
 
-  (<*>) pf@(Pattern Analog _) px@(Pattern Digital _) = Pattern Digital q
+  (<*>) pf@(Pattern Analog _ _) px@(Pattern Digital _ _)
+    = Pattern Digital Nothing q
     where q st = concatMap match $ query px st
             where
               match (Event xWhole xPart x) =
@@ -264,7 +274,7 @@ instance Applicative Pattern where
                 (\e -> Event xWhole xPart (value e x))
                 (query pf st {arc = pure (start xPart)})
 
-  (<*>) pf px = Pattern Analog q
+  (<*>) pf px = Pattern Analog Nothing q
     where q st = concatMap match $ query pf st
             where
               match ef =
@@ -274,7 +284,7 @@ instance Applicative Pattern where
 
 -- | Like <*>, but the structure only comes from the left
 (<*) :: Pattern (a -> b) -> Pattern a -> Pattern b
-(<*) pf@(Pattern Digital _) px = Pattern Digital q
+(<*) pf@(Pattern Digital _ _) px = Pattern Digital Nothing q
   where q st = concatMap match $ query pf st
          where
             match (Event fWhole fPart f) =
@@ -283,7 +293,7 @@ instance Applicative Pattern where
               query px $ st {arc = xQuery fWhole}
             xQuery (Arc s _) = pure s -- for discrete events, match with the onset
 
-(<*) pf px = Pattern Analog q
+(<*) pf px = Pattern Analog Nothing q
   where q st = concatMap match $ query pf st
           where
             match (Event fWhole fPart f) =
@@ -293,7 +303,7 @@ instance Applicative Pattern where
 
 -- | Like <*>, but the structure only comes from the right
 (*>) :: Pattern (a -> b) -> Pattern a -> Pattern b
-(*>) pf px@(Pattern Digital _) = Pattern Digital q
+(*>) pf px@(Pattern Digital _ _) = Pattern Digital Nothing q
   where q st = concatMap match $ query px st
          where
             match (Event xWhole xPart x) =
@@ -302,7 +312,7 @@ instance Applicative Pattern where
               query pf $ fQuery xWhole
             fQuery (Arc s _) = st {arc = pure s} -- for discrete events, match with the onset
 
-(*>) pf px = Pattern Analog q
+(*>) pf px = Pattern Analog Nothing q
   where q st = concatMap match $ query px st
           where
             match (Event xWhole xPart x) =
@@ -569,7 +579,10 @@ showFrac n d = fromMaybe plain $ do n' <- up n
 -- * Internal functions
 
 empty :: Pattern a
-empty = Pattern {nature = Digital, query = const []}
+empty = Pattern {nature = Digital,
+                 query = const [],
+                 period = Nothing
+                }
 
 queryArc :: Pattern a -> Arc -> [Event a]
 queryArc p a = query p $ State a Map.empty 
@@ -586,6 +599,9 @@ isAnalog = not . isDigital
 -- makes transformations easier to specify.
 splitQueries :: Pattern a -> Pattern a
 splitQueries p = p {query = \st -> concatMap (\a -> query p st {arc = a}) $ arcCyclesZW (arc st)}
+
+withPeriod :: (Time -> Time) -> Pattern a -> Pattern a
+withPeriod f p = p {period = (f <$> period p)}
 
 -- | Apply a function to the arcs/timespans (both whole and parts) of the result
 withResultArc :: (Arc -> Arc) -> Pattern a -> Pattern a

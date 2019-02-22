@@ -15,9 +15,10 @@ import           Sound.Tidal.Pattern
 silence :: Pattern a
 silence = empty
 
--- | Takes a function from time to values, and turns it into a 'Pattern'.
+-- | Takes a function from time to values, and turns it into a @Pattern@.
+-- The period is assumed to be 1.
 sig :: (Time -> a) -> Pattern a
-sig f = Pattern Analog q
+sig f = Pattern Analog (Just 1) q
   where q (State (Arc s e) _)
           | s > e = []
           | otherwise = [Event (Arc s e) (Arc s e) (f (s+((e-s)/2)))]
@@ -55,7 +56,7 @@ square = sig $
 -- useful if you're using something like the retrig function defined
 -- in tidal.el.
 envL :: Pattern Double
-envL = sig $ \t -> max 0 $ min (fromRational t) 1
+envL = (sig $ \t -> max 0 $ min (fromRational t) 1) {period = Nothing}
 
 -- | like 'envL' but reversed.
 envLR :: Pattern Double
@@ -63,11 +64,13 @@ envLR = (1-) <$> envL
 
 -- | 'Equal power' version of 'env', for gain-based transitions
 envEq :: Pattern Double
-envEq = sig $ \t -> sqrt (sin (pi/2 * max 0 (min (fromRational (1-t)) 1)))
+envEq = (sig $ \t -> sqrt (sin (pi/2 * max 0 (min (fromRational (1-t)) 1))))
+  {period = Nothing}
 
 -- | Equal power reversed
 envEqR :: Pattern Double
-envEqR = sig $ \t -> sqrt (cos (pi/2 * max 0 (min (fromRational (1-t)) 1)))
+envEqR = (sig $ \t -> sqrt (cos (pi/2 * max 0 (min (fromRational (1-t)) 1))))
+  {period = Nothing}
 
 -- ** Pattern algebra
 
@@ -184,8 +187,9 @@ append a b = cat [a,b]
 cat :: [Pattern a] -> Pattern a
 cat [] = silence
 -- TODO I *guess* it would be digital..
-cat ps = Pattern Digital q
+cat ps = Pattern Digital newPeriod q
   where n = length ps
+        newPeriod = sum <$> (sequence $ map period ps)
         q st = concatMap (f st) $ arcCyclesZW (arc st)
         f st a = query (withResultTime (+offset) p) $ st {arc = Arc (subtract offset (start a)) (subtract offset (stop a))}
           where p = ps !! i
@@ -228,9 +232,9 @@ timeCat tps = stack $ map (\(s,e,p) -> compressArc (Arc (s/total) (e/total)) p) 
 -- their events are combined over time. 
 overlay :: Pattern a -> Pattern a -> Pattern a
 -- Analog if they're both analog
-overlay p@(Pattern Analog _) p'@(Pattern Analog _) = Pattern Analog $ \st -> query p st ++ query p' st
+overlay p@(Pattern Analog _ _) p'@(Pattern Analog _ _) = Pattern Analog Nothing $ \st -> query p st ++ query p' st
 -- Otherwise digital. Won't really work to have a mixture.. Hmm
-overlay p p' = Pattern Digital $ \st -> query p st ++ query p' st
+overlay p p' = Pattern Digital Nothing $ \st -> query p st ++ query p' st
 
 -- | An infix alias of @overlay@
 (<>) :: Pattern a -> Pattern a -> Pattern a
@@ -269,7 +273,7 @@ density = fast
 _fast :: Time -> Pattern a -> Pattern a
 _fast r p | r == 0 = silence
           | r < 0 = rev $ _fast (negate r) p
-          | otherwise = withResultTime (/ r) $ withQueryTime (* r) p
+          | otherwise = withPeriod (/ r) $ withResultTime (/ r) $ withQueryTime (* r) p
 
 -- | Slow down a pattern by the given time pattern
 slow :: Pattern Time -> Pattern a -> Pattern a

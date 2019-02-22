@@ -359,13 +359,13 @@ stut' :: Pattern Int -> Pattern Time -> (Pattern a -> Pattern a) -> Pattern a ->
 stut' = stutWith
 
 cI :: String -> Pattern Int
-cI s = Pattern Analog $ \(State a m) -> maybe [] (f a) $ Map.lookup s m
+cI s = Pattern Analog Nothing $ \(State a m) -> maybe [] (f a) $ Map.lookup s m
   where f a (VI v) = [Event a a v]
         f a (VF v) = [Event a a (floor v)]
         f a (VS v) = maybe [] (\v' -> [Event a a v']) (readMaybe v)
 
 _cX :: (Arc -> Value -> [Event a]) -> [a] -> String -> Pattern a
-_cX f ds s = Pattern Analog $
+_cX f ds s = Pattern Analog Nothing $
                \(State a m) -> maybe (map (Event a a) ds) (f a) $ Map.lookup s m
 
 _cF :: [Double] -> String -> Pattern Double

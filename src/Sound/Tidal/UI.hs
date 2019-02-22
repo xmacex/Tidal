@@ -78,7 +78,7 @@ jux (# ((1024 <~) $ gain rand)) $ sound "sn sn ~ sn" # gain rand
 @
 -}
 rand :: Fractional a => Pattern a
-rand = Pattern Analog (\(State a@(Arc s e) _) -> [Event a a (realToFrac $ timeToRand $ (e + s)/2)])
+rand = Pattern Analog Nothing (\(State a@(Arc s e) _) -> [Event a a (realToFrac $ timeToRand $ (e + s)/2)])
 
 {- | Just like `rand` but for whole numbers, `irand n` generates a pattern of (pseudo-) random whole numbers between `0` to `n-1` inclusive. Notably used to pick a random
 samples from a folder:
@@ -141,7 +141,7 @@ perlin2With x y = (/2) . (+1) $ interp2 <$> xfrac <*> yfrac <*> dota <*> dotb <*
   s x' = 6.0 * x'**5 - 15.0 * x'**4 + 10.0 * x'**3
 
 perlin2 :: Pattern Double -> Pattern Double
-perlin2 = perlin2With (sig fromRational)
+perlin2 = perlin2With (sig fromRational) {period = Nothing}
 
 {- | Randomly picks an element from the given list
 
@@ -984,7 +984,7 @@ randArcs n =
 
 -- TODO - what does this do? Something for @stripe@ ..
 randStruct :: Int -> Pattern Int
-randStruct n = splitQueries $ Pattern {nature = Digital, query = f}
+randStruct n = splitQueries $ Pattern {nature = Digital, period = Nothing, query = f}
   where f st = map (\(a,b,c) -> Event a (fromJust b) c) $ filter (\(_,x,_) -> isJust x) as
           where as = map (\(i, Arc s' e') ->
                     (Arc (s' + sam s) (e' + sam s),
@@ -1210,7 +1210,7 @@ swing = swingBy (pure $ 1%3)
 {- | `cycleChoose` is like `choose` but only picks a new item from the list
 once each cycle -}
 cycleChoose::[a] -> Pattern a
-cycleChoose xs = Pattern {nature = Digital, query = q}
+cycleChoose xs = Pattern {nature = Digital, period = Nothing, query = q}
   where q State {arc = Arc s e} = [Event (Arc s e) (Arc s e) (xs !! floor (dlen * ctrand s))]
         dlen = fromIntegral $ length xs
         ctrand s = (timeToRand :: Time -> Double) $ fromIntegral $ (floor :: Time -> Int) $ sam s
@@ -1250,7 +1250,7 @@ _scramble n = _rearrangeWith (_segment (fromIntegral n) $ irand n) n
 randrun :: Int -> Pattern Int
 randrun 0 = silence
 randrun n' =
-  splitQueries $ Pattern Digital (\(State a@(Arc s _) _) -> events a $ sam s)
+  splitQueries $ Pattern Digital Nothing (\(State a@(Arc s _) _) -> events a $ sam s)
   where events a seed = mapMaybe toEv $ zip arcs shuffled
           where shuffled = map snd $ sortOn fst $ zip rs [0 .. (n'-1)]
                 rs = timeToRands seed n'
@@ -1690,7 +1690,7 @@ inv = (not <$>)
 -- | Serialises a pattern so there's only one event playing at any one
 -- time, making it 'monophonic'. Events which start/end earlier are given priority.
 mono :: Pattern a -> Pattern a
-mono p = Pattern Digital $ \(State a cm) -> flatten $ query p (State a cm) where
+mono p = Pattern Digital Nothing $ \(State a cm) -> flatten $ query p (State a cm) where
   flatten :: [Event a] -> [Event a]
   flatten = mapMaybe constrainPart . truncateOverlaps . sortOn whole
   truncateOverlaps [] = []
@@ -1711,7 +1711,7 @@ mono p = Pattern Digital $ \(State a cm) -> flatten $ query p (State a cm) where
 -- smooth :: Pattern Double -> Pattern Double
 
 smooth :: Fractional a => Pattern a -> Pattern a
-smooth p = Pattern Analog $ \st@(State a cm) -> tween st a $ query monoP (State (midArc a) cm)
+smooth p = Pattern Analog Nothing $ \st@(State a cm) -> tween st a $ query monoP (State (midArc a) cm)
   where
     midArc a = Arc (mid (start a, stop a)) (mid (start a, stop a))
     tween _ _ [] = []
