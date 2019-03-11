@@ -9,6 +9,7 @@ import           Control.Concurrent
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust, fromMaybe, isJust, catMaybes)
 import qualified Control.Exception as E
+import           System.Clock (TimeSpec (..))
 -- import Control.Monad.Reader
 -- import Control.Monad.Except
 -- import qualified Data.Bifunctor as BF
@@ -151,16 +152,16 @@ toMessage t target tempo e = do vs <- toData target addExtra
         addExtra = (\v -> (Map.union v $ Map.fromList (extra messageStamp)
                           )) <$> e
         extra False = [("cps", (VF $ T.cps tempo)),
-                       ("delta", VF delta),
+                       ("delta", VF $ T.ts2rf delta),
                        ("cycle", VF (fromRational $ start $ whole e))
                       ]
         extra True = timestamp ++ (extra False)
-        timestamp = [("sec", VI sec),
-                     ("usec", VI usec)
+        timestamp = [("sec", VI s),
+                     ("usec", VI us)
                     ]
         ut = O.ntpr_to_ut t
-        sec = floor ut
-        usec = floor $ 1000000 * (ut - (fromIntegral sec))
+        s = floor ut
+        us = floor $ 1000000 * (ut - (fromIntegral s))
 
 doCps :: MVar T.Tempo -> (Double, Maybe Value) -> IO ()
 doCps tempoMV (d, Just (VF cps)) = do _ <- forkIO $ do threadDelay $ floor $ d * 1000000
@@ -175,15 +176,16 @@ onTick config cMapMV pMV cxs tempoMV st =
   do p <- readMVar pMV
      cMap <- readMVar cMapMV
      tempo <- readMVar tempoMV
-     now <- O.time
+     now <- T.getNow
+     let nowD = T.ts2rf now
      let cMap' = Map.insert "_cps" (VF $ T.cps tempo) cMap
          es = filter eventHasOnset $ query p (State {arc = T.nowArc st, controls = cMap'})
-         on e = (sched tempo $ start $ whole e) + eventNudge e
+         on e = (T.ts2rf $ sched tempo $ start $ whole e) + eventNudge e
          eventNudge e = fromJust $ getF $ fromMaybe (VF 0) $ Map.lookup "nudge" $ value e
          messages target = catMaybes $ map (\e -> do m <- toMessage (on e + latency target) target tempo e
                                                      return $ (on e, m)
                                            ) es
-         cpsChanges = map (\e -> (on e - now, Map.lookup "cps" $ value e)) es
+         cpsChanges = map (\e -> (on e - nowD, Map.lookup "cps" $ value e)) es
          latency target = oLatency target + cFrameTimespan config + T.nudged tempo
      mapM_ (\(Cx target udp) -> E.catch (mapM_ (send target (latency target) udp) (messages target))
                        (\(_ ::E.SomeException)
@@ -202,8 +204,8 @@ send target latency u (time, m)
                                     O.sendMessage u m
                    return ()
 
-sched :: T.Tempo -> Rational -> Double
-sched tempo c = ((fromRational $ c - (T.atCycle tempo)) / T.cps tempo) + (T.atTime tempo)
+sched :: T.Tempo -> Rational -> TimeSpec
+sched tempo c = (T.rf2ts $ (fromRational $ c - (T.atCycle tempo)) / T.cps tempo) + (T.atTime tempo)
 
 -- Interaction
 
@@ -262,8 +264,9 @@ streamOnce :: Stream -> Bool -> ControlPattern -> IO ()
 streamOnce st asap p
   = do cMap <- readMVar (sInput st)
        tempo <- readMVar (sTempoMV st)
-       now <- O.time
-       let latency target | asap = 0
+       now <- T.getNow
+       let nowD = T.ts2rf now
+           latency target | asap = 0
                           | otherwise = oLatency target
            fakeTempo = T.Tempo {T.cps = T.cps tempo,
                                 T.atCycle = 0,
@@ -276,9 +279,9 @@ streamOnce st asap p
                                                        controls = cMap'
                                                       }
                                                )
-           at e = sched fakeTempo $ start $ whole e
-           on e = sched tempo $ start $ whole e
-           cpsChanges = map (\e -> (on e - now, Map.lookup "cps" $ value e)) es
+           at e = T.ts2rf $ sched fakeTempo $ start $ whole e
+           on e = T.ts2rf $ sched tempo $ start $ whole e
+           cpsChanges = map (\e -> (on e - nowD, Map.lookup "cps" $ value e)) es
            messages target =
              catMaybes $ map (\e -> do m <- toMessage (at e + (latency target)) target fakeTempo e
                                        return $ (at e, m)

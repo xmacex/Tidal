@@ -7,17 +7,17 @@ import Control.Concurrent (forkIO,threadDelay)
 import Control.Monad (forever)
 import Sound.OSC.FD
 import Sound.Tidal.Tempo
+import System.Clock (TimeSpec (..), sec, nsec)
 
 parseEspTempo :: [Datum] -> Maybe (Tempo -> Tempo)
 parseEspTempo d = do
   on :: Integer <- datum_integral (d!!0)
   bpm <- datum_floating (d!!1)
-  t1 :: Integer <- datum_integral (d!!2)
+  t1 <- datum_integral (d!!2)
   t2 <- datum_integral (d!!3)
-  n :: Integer <- datum_integral (d!!4)
-  let nanos = (t1*1000000000) + t2
+  (n :: Int) <- datum_integral (d!!4)
   return $ \t -> t {
-    atTime = realToFrac nanos / 1000000000,
+    atTime = TimeSpec {sec = t1, nsec = t2},
     atCycle = fromIntegral n,
     cps = bpm/60,
     paused = on == 0

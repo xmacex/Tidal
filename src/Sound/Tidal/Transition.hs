@@ -15,7 +15,7 @@ import Sound.Tidal.Core
 import Sound.Tidal.Params (gain, pan)
 import Sound.Tidal.Pattern
 import Sound.Tidal.Stream
-import Sound.Tidal.Tempo (timeToCycles)
+import Sound.Tidal.Tempo (timeToCycles, getNow)
 import Sound.Tidal.UI (fadeOutFrom, fadeInFrom)
 import Sound.Tidal.Utils (enumerate)
 
@@ -37,7 +37,7 @@ transition stream f patId !pat = do pMap <- takeMVar (sPMapMV stream)
                                   history = pat:silence:[]
                                  }
     transition' context = do tempo <- readMVar $ sTempoMV stream
-                             now <- O.time
+                             now <- getNow
                              let c = timeToCycles tempo now
                              return $ f c context
 
