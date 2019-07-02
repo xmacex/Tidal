@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings, TypeSynonymInstances, FlexibleInstances, CPP #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TemplateHaskell, QuasiQuotes #-}
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -fno-warn-unused-do-bind #-}
 
 module Sound.Tidal.ParseBP where
@@ -13,6 +14,9 @@ import           Data.Maybe
 import           Data.Ratio
 import           Data.Typeable (Typeable)
 import           GHC.Exts ( IsString(..) )
+import           Language.Haskell.TH
+import           Language.Haskell.TH.Quote
+import           Language.Haskell.TH.Syntax
 import           Text.Parsec.Error
 import           Text.ParserCombinators.Parsec
 import           Text.ParserCombinators.Parsec.Language ( haskellDef )
@@ -36,6 +40,8 @@ instance Show TidalParseError where
           message = showErrorMessages "or" "unknown parse error" "expecting" "unexpected" "end of input" $ errorMessages perr
           perr = parsecError err
 
+instance (Enumerable a, Parseable a) => IsString (TPat a) where
+  fromString s = either (error . show) id $ parseTPat s
 
 -- | AST representation of patterns
 
@@ -55,6 +61,7 @@ data TPat a = TPat_Atom a
             | TPat_ShiftL Time (TPat a)
               -- TPat_E Int Int (TPat a)
             | TPat_pE (TPat Int) (TPat Int) (TPat Int) (TPat a)
+            | TPat_Var String
             deriving (Show)
 
 toPat :: (Enumerable a, Parseable a) => TPat a -> Pattern a
@@ -75,7 +82,28 @@ toPat = \case
    TPat_Foot -> error "Can't happen, feet (.'s) only used internally.."
    TPat_EnumFromTo a b -> unwrap $ fromTo <$> toPat a <*> toPat b
    -- TPat_EnumFromThenTo a b c -> unwrap $ fromThenTo <$> (toPat a) <*> (toPat b) <*> (toPat c)
-   _ -> silence
+   -- _ -> silence
+
+apply :: Name -> [Q Exp] -> Q Exp
+apply n = foldl appE (conE n)
+
+instance Lift a => Lift (TPat a) where 
+  lift (TPat_Atom a) = apply 'TPat_Atom [lift a]
+  lift (TPat_Density a b) = apply 'TPat_Density [(lift a), (lift b)]
+  lift (TPat_Slow a b) = apply 'TPat_Slow [(lift a), (lift b)]
+  lift (TPat_Zoom a b) = apply 'TPat_Zoom [(lift a), (lift b)]
+  lift (TPat_DegradeBy a b) = apply 'TPat_DegradeBy [(lift a), (lift b)]
+  lift TPat_Silence = conE 'TPat_Silence
+  lift TPat_Foot = conE 'TPat_Foot
+  lift (TPat_Elongate a) = apply 'TPat_Elongate [lift a]
+  lift (TPat_EnumFromTo a b) = apply 'TPat_EnumFromTo [lift a, lift b]
+  lift (TPat_Cat a) = apply 'TPat_Cat [lift a]
+  lift (TPat_TimeCat a) = apply 'TPat_TimeCat [lift a]
+  lift (TPat_Overlay a b) = apply 'TPat_Overlay [lift a, lift b]
+  lift (TPat_Stack a) = apply 'TPat_Stack [lift a]
+  lift (TPat_ShiftL a b) = apply 'TPat_ShiftL [lift a, lift b]
+  lift (TPat_pE a b c d) = apply 'TPat_pE [lift a, lift b, lift c, lift d]
+  lift (TPat_Var a) = varE $ mkName a
 
 durations :: [TPat a] -> [(Int, TPat a)]
 durations [] = []
@@ -286,8 +314,14 @@ pSequence f = do (_, pat) <- pSequenceN f
 pSingle :: Parser (TPat a) -> Parser (TPat a)
 pSingle f = f >>= pRand >>= pMult
 
+pVar :: Parser (TPat a)
+pVar = do string "${"
+          s <- many1 (noneOf "}")
+          char '}'
+          return $ TPat_Var s
+
 pPart :: Parseable a => Parser (TPat a) -> Parser [TPat a]
-pPart f = do pt <- pSingle f <|> pPolyIn f <|> pPolyOut f
+pPart f = do pt <- pSingle f <|> pPolyIn f <|> pPolyOut f <|> pVar
              pt' <- pE pt
              pt'' <- pRand pt'
              spaces
@@ -481,3 +515,27 @@ pDensity = angles (pRatio <?> "ratio")
            return (1 % 1)
 -}
 
+
+bp2 :: QuasiQuoter
+bp2 = QuasiQuoter {
+  quoteExp  = compile,
+  quotePat  = notHandled "patterns",
+  quoteType = notHandled "types",
+  quoteDec  = notHandled "declarations"
+}
+  where notHandled things = error $
+          things ++ " are not handled by the bp quasiquoter."
+
+--mini :: Parseable a => String -> TPat a
+--mini s = either (error . show) id $ parseTPat s
+
+--compile :: String -> Q Exp
+--compile s = [e| mini s |]
+compile :: String -> Q Exp
+compile s =
+  case parseTPatS s of
+    Left  err    -> fail (show err)
+    Right pat -> [e| pat |]
+
+parseTPatS :: String -> Either ParseError (TPat String)
+parseTPatS = parseTPat

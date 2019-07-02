@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, TypeSynonymInstances, FlexibleInstances #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# LANGUAGE DeriveLift #-}
 
 module Sound.Tidal.Pattern where
 
@@ -14,6 +15,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust, fromJust, catMaybes, fromMaybe, mapMaybe)
 import           Data.Ratio (numerator, denominator)
 import           Data.Typeable (Typeable)
+import           Language.Haskell.TH.Syntax
 
 ------------------------------------------------------------------------
 -- * Types
@@ -41,7 +43,7 @@ cyclePos t = t - sam t
 data ArcF a = Arc
   { start :: a
   , stop :: a
-  } deriving (Eq, Ord, Functor)
+  } deriving (Eq, Ord, Functor, Lift)
 
 type Arc = ArcF Time
 
