@@ -47,25 +47,13 @@ Assuming the filter is in place."
                       (concat ":complete repl " "\"" arg "\"" "\n"))
 
   (seq-remove
-   (lambda (item) (equal item "tidal>"))
-   (cdr (cdr (cdr (seq-map
-                   (lambda (item) (replace-regexp-in-string "\"" "" item))
-                   (split-string tidal-kept-output)))))))
+   (lambda (item) (equal item "tidal> "))
+   (seq-drop (seq-map
+              (lambda (item) (replace-regexp-in-string "\"" "" item))
+              (split-string tidal-kept-output "\n")) 1)))
 
-
-  
-  (cdr (cdr (cdr (seq-map               ; Skip 3 first items
-                  (lambda (item) (replace-regexp-in-string "\"" "" item))
-                  (split-string tidal-kept-output))))))
-
-;; (tidal-get-completions "dr")
-
-(seq-remove
- (lambda (item) (equal item "tidal>"))
- (cdr (cdr (cdr (seq-map
-                 (lambda (item) (replace-regexp-in-string "\"" "" item))
-                 (split-string tidal-kept-output))))))
-
+;; Testing it
+(tidal-get-completions "so")
 
 
 (defun company-tidal-backend (command &optional arg &rest ignored)
