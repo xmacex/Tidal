@@ -49,7 +49,7 @@ Assuming the filter is in place."
   (seq-remove
    (lambda (item) (equal item "tidal> "))
    (seq-drop (seq-map
-              (lambda (item) (replace-regexp-in-string "\"" "" item))
+              (lambda (item) (string-trim item "\"" "\""))
               (split-string tidal-kept-output "\n")) 1)))
 
 ;; Testing it
