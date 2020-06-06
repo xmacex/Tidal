@@ -4,24 +4,27 @@
 ;;
 ;; A `company` autocompletion backend for Tidal Cycles.
 ;;
-;; FIXME: The completions are from previous run. This is a bug, maybe
-;; from parellel programming.
+;; FIXME: The process sleeps for a little while to wait for the
+;; completions.  This cannot be a good way for interprocess
+;; communication.
 ;;
-;; TODO: Autocomplete d[1-8]. They come from Tidal but company doesn't
-;; show that many. Maybe sort them to the top?
+;; TODO: Autocomplete d[1-8].  They come from Tidal but company
+;; doesn't show that many.  Maybe sort them to the top?
 ;;
 ;; TODO: Keep the output only when completing, not when typing stuff
-;; directly to Tidal comint window. Maybe make the hook conditional on
-;; the mode?
+;; directly to Tidal comint window.  Maybe make the hook conditional
+;; on the mode?
 ;;
-;; TODO: Autocomplete samples. They need to be asked from SuperDirt or
-;; SuperCollider
+;; TODO: Autocomplete samples.  They need to be asked from SuperDirt
+;; or SuperCollider
 ;;
 ;; Work is delegated to the Haskell GHCi actually.
 ;; 
 ;;; Code:
 
 (require 'cl-lib)
+(require 'comint)
+(require 'company)
 
 (defun keep-process-output (output)
   "A filter function for keeping process OUTPUT."
@@ -45,6 +48,8 @@ Assuming the filter is in place."
 
   (comint-send-string tidal-buffer
                       (concat ":complete repl " "\"" arg "\"" "\n"))
+  ;; FIXME: sleeping cannot be good interprocess communication
+  (sleep-for 0.01)
 
   (seq-remove
    (lambda (item) (equal item "tidal> "))
@@ -75,6 +80,6 @@ Assuming the filter is in place."
 ;; (add-to-list 'company-backends 'company-tidal-backend)
 
 ;; Bind completion to tab.
-;; (define-key map [\t] 'company-indent-or-complete-common)
+;; (define-key tidal-mode-map [?\t] 'company-indent-or-complete-common)
 
 ;;; company-tidal.el ends here
