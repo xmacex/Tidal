@@ -19,7 +19,7 @@
 ;; or SuperCollider
 ;;
 ;; Work is delegated to the Haskell GHCi actually.
-;; 
+;;
 ;;; Code:
 
 (require 'cl-lib)
@@ -60,20 +60,42 @@ Assuming the filter is in place."
 ;; Testing it
 (tidal-get-completions "so")
 
+(defun tidal-get-meta (arg)
+  "Get meta for Tidal object ARG."
+  ;; (format "Meta about %s" arg))
+  (format "Meta about %s" (propertize arg 'face 'bold)))
+
+(defun tidal-get-annotation (arg)
+  "Get annotation for Tidal object ARG."
+  ;; (comint-send-string tidal-buffer
+  ;;                     (format ":info %s\n" arg))
+  ;; (accept-process-output
+  ;;  (get-buffer-process (get-buffer tidal-buffer)) 0.01)
+  ;; (car (split-string tidal-kept-output "\n")))
+  (format ". Annotation about %s" arg))
+
+;; Testing it
+;; (car (split-string (tidal-get-annotation "saw") "\n"))
+(tidal-get-annotation "saw")
+
+;; Integration test of getting completions and their annotations
+(seq-map 'tidal-get-annotation (tidal-get-completions "so"))
 
 (defun company-tidal-backend (command &optional arg &rest ignored)
-  "Backend COMMAND for Tidal Cycles items starting with ARG."
+  "Backend COMMAND for Tidal Cycles items starting with ARG.
+
+Rest of the parameters are IGNORED."
   (interactive (list 'interactive))
 
   (cl-case command
     (interactive (company-begin-backend 'company-tidal-backend))
     (prefix (and (eq major-mode 'tidal-mode)
                  (company-grab-symbol)))
-    (candidates
-     (message arg)
-     (tidal-get-completions arg))))
+    (candidates (tidal-get-completions arg))
+    ;; (init (...) ; Could get SC sounds in this once run function
+    (meta (tidal-get-meta arg))
+    (annotation (tidal-get-annotation arg))))
 
-(company-tidal-backend 'company-tidal-backend "de")
 
 ;;; Enable these when things are working
 ;; Install the backend.
